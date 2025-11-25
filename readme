@@ -1,4 +1,4 @@
-This is a Python based GUI to control weather and actor parameters using GUI. Tested in Ubuntu22.04 with python 3.10 and Carla 0.9.14.
+This is a Python based GUI to control weather and actor parameters using GUI. Tested in Ubuntu22.04 with python 3.10 and Carla 0.9.14, 0.9.15
 
 Put it inside PythonAPI/examples folder in CARLA folder and open from terminal.
 
