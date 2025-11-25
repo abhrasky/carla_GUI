@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 This is a Python based GUI to control weather and actor parameters using GUI. Tested in Ubuntu22.04 with python 3.10 and Carla 0.9.14, 0.9.15
+=======
+This is a Python based GUI to control weather and actor parameters using GUI. Tested in Ubuntu22.04 with python 3.10 and Carla 0.9.14,0.9.15
+>>>>>>> 0898c7c (gui file added , torque and steering curves are visulaised)
 
-Put it inside PythonAPI/examples folder in CARLA folder and open from terminal.
+Put control_dashboard.py and carla_control.ui files inside CARLA_0.9.x/PythonAPI/examples folder in CARLA folder and open from terminal.
 
 Interested people are welcome to modify and enhance it.

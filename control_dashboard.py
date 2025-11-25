@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from PyQt5 import uic
-from PyQt5.QtWidgets import QApplication,QMainWindow,QWidget,QAction,QLineEdit,QComboBox
+from PyQt5.QtWidgets import QApplication,QMainWindow,QWidget,QAction,QLineEdit,QComboBox,QMessageBox
+from PyQt5 import QtWidgets
 from PyQt5.QtCore import *
 
 
@@ -12,7 +13,15 @@ import json
 import carla
 import re
 
+#-------for plots------------------
+from PyQt5.QtWidgets import QFileDialog,QVBoxLayout
+from matplotlib.backends.backend_qt5agg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT as NavigationToolbar
+)
+from matplotlib.figure import Figure
 
+import pandas as pd
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -24,9 +33,35 @@ class MainWindow(QMainWindow):
         self.vehicle_name=None
         self.vehicle_model=None
         self.vehicle_make=None
+        self.steering_curve_list=[] #list of tupples of (x,y) points
+        self.torq_curve_list=[]
         
         
-        
+        # Create figures and canvases---------------------
+        self.figure_torq = Figure()
+        self.canvas_torq = FigureCanvas(self.figure_torq)
+
+        self.figure_steer = Figure()
+        self.canvas_steer = FigureCanvas(self.figure_steer)
+
+         # Add canvases to UI frames
+        layout_torq = QVBoxLayout(self.VFRM_Eng_torq)
+        layout_torq.addWidget(self.canvas_torq)
+
+        layout_steer = QVBoxLayout(self.VFRM_body_steer)
+        layout_steer.addWidget(self.canvas_steer)
+
+        self.df = None
+
+        # Connect buttons and pass target plots
+        self.VEPB_torque.clicked.connect(lambda: self.open_file_dialog(self.figure_torq, self.canvas_torq))
+        self.VBPB_sc.clicked.connect(lambda: self.open_file_dialog(self.figure_steer, self.canvas_steer))
+
+        # Connect plot clicks
+        self.canvas_torq.mpl_connect("button_press_event", self.on_torq_clicked)
+        self.canvas_steer.mpl_connect("button_press_event", self.on_steer_clicked)
+
+        #-------------------------------------------------
         self.connect_server('localhost',2000)
         self.on_tab_changes()
         
@@ -34,6 +69,7 @@ class MainWindow(QMainWindow):
         self.VPB_apply.clicked.connect(self.apply_changes)
         self.VCB_id.activated.connect(self.fetch_vehicle_details)
         self.VCB_wheels.activated.connect(self.fetch_wheel_details)
+        self.VCB_gears.activated.connect(self.fetch_gear_details)
         
         
         self.WPB_set_default.clicked.connect(self.set_weather_default)
@@ -84,23 +120,21 @@ class MainWindow(QMainWindow):
         else:
             print(f"Found hero vehicle: ID={self.hero_vehicle.id}, type={self.hero_vehicle.type_id}, {type(self.hero_vehicle.id)}")'''
         
-
     def on_tab_changes(self):
         tab_id=self.TABS.currentIndex()
         print(f'current tab {tab_id}')
 
         if tab_id==0:
             self.get_actors()
+            self.VCB_id.clear()
             self.VCB_id.addItems(self.actor_ids)
         elif tab_id==1:
             self.fetch_weather_details()
-
 
     def get_actors(self):
         self.actor_ids=[] #clean previous ones
         for actor in self.world.get_actors().filter('vehicle.*'):
             self.actor_ids.append(str(actor.id))
-
 
     def apply_changes(self):
         #connect to server
@@ -138,6 +172,7 @@ class MainWindow(QMainWindow):
         
 
         # reaccess the vehicle params and print
+
     def list_wheels(self,wheels):
         ids=[]
         for i,_ in enumerate(wheels):
@@ -146,6 +181,14 @@ class MainWindow(QMainWindow):
         print(f'wheels id list {ids}')
         return ids
     
+    def list_gears(self,gears):
+        ids=[]
+        for i,_ in enumerate(gears):
+            ids.append(str(i))
+        #debug
+        print(f'gear id list {ids}')
+        return ids
+
 
     def fetch_wheel_details(self):
         id=int(self.VCB_wheels.currentText())
@@ -172,7 +215,6 @@ class MainWindow(QMainWindow):
         self.VWLE_ltsv.setText(str(self.lat_stiff_value))
         self.VWLE_ltmsl.setText(str(self.lat_stiff_max_load))
      
-
     def fetch_vehicle_details(self):
         id=int(self.VCB_id.currentText())
         print(f'selected id {id}')
@@ -181,6 +223,12 @@ class MainWindow(QMainWindow):
 
         self.vehilcle_physics_control=self.selected_actor.get_physics_control()
         #----Engine---------------
+        self.torq_curve=self.vehilcle_physics_control.torque_curve
+        self.torq_curve_list=[]
+        for pt in self.torq_curve:
+            self.torq_curve_list.append((pt.x,pt.y))
+        self.plot_csv(self.torq_curve_list,self.figure_torq,self.canvas_torq,'RPM vs Torque(Nm)','RPM','Torque(Nm)')
+        
         self.max_rpm = self.vehilcle_physics_control.max_rpm
         self.moi=self.vehilcle_physics_control.moi
         self.damping_rate_full_throttle=self.vehilcle_physics_control.damping_rate_full_throttle
@@ -191,6 +239,12 @@ class MainWindow(QMainWindow):
         
         #-----Body----------------
         self.steering_curve=self.vehilcle_physics_control.steering_curve
+        self.steering_curve_list=[]
+        for pt in self.steering_curve:
+            self.steering_curve_list.append((pt.x,pt.y))
+        print(f'steering curve {self.steering_curve_list}')
+        self.plot_csv(self.steering_curve_list,self.figure_steer,self.canvas_steer,'Steering Angle curve','Angle(deg)','Speed(m/s)')
+        
         self.mass=self.vehilcle_physics_control.mass
         self.drag_coefficient=self.vehilcle_physics_control.drag_coefficient
         self.center_of_mass=self.vehilcle_physics_control.center_of_mass
@@ -198,7 +252,14 @@ class MainWindow(QMainWindow):
 
 
         #-------------Transmission--------------
+        
+        
         self.forward_gears=self.vehilcle_physics_control.forward_gears
+        
+        self.gear_list=self.list_gears(self.forward_gears)
+        self.VCB_gears.clear()
+        self.VCB_gears.addItems(self.gear_list)
+        
         self.use_gear_autobox=self.vehilcle_physics_control.use_gear_autobox
         self.gear_switch_time=self.vehilcle_physics_control.gear_switch_time
         self.clutch_strength=self.vehilcle_physics_control.clutch_strength
@@ -211,7 +272,7 @@ class MainWindow(QMainWindow):
         #list all wheels and show first wheels detials by default
         self.wheels=self.vehilcle_physics_control.wheels
         self.wheel_list=self.list_wheels(self.wheels)
-        
+        self.VCB_wheels.clear()
         self.VCB_wheels.addItems(self.wheel_list)
         # 
       
@@ -241,6 +302,8 @@ class MainWindow(QMainWindow):
 
 
         #------Transmission--------------------
+        
+        
         self.VTLE_agb.setText(str(self.use_gear_autobox))
         self.VTLE_gst.setText(str(self.gear_switch_time))
         self.VTLE_cs.setText(str(self.clutch_strength))
@@ -249,8 +312,102 @@ class MainWindow(QMainWindow):
 
 
         #print(f'roal name {self.vehicle_name}')
-        
-        
+
+    
+    def plot_csv(self, data, figure, canvas,title='Plot',x_label='x',y_label='y'):
+        try:
+            figure.clear()
+            ax = figure.add_subplot(111)
+
+            # Check if input is a list of (x, y) tuples
+            if isinstance(data, list) and all(isinstance(t, tuple) and len(t) == 2 for t in data):
+                x, y = zip(*data)
+                ax.plot(x, y, marker='o', linestyle='-')
+                ax.set_title(title)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(y_label)
+            else:
+                # Assume it's a pandas DataFrame
+                self.df = data
+                self.df.plot(ax=ax)
+                ax.set_title(title)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(y_label)
+
+            canvas.draw()  # ✅ draw on canvas, not figure
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to plot data:\n{e}")
+
+    def on_torq_clicked(self, event):
+        if self.torq_curve_list is not None:
+            self.open_full_plot_window(self.torq_curve_list,'RPM vs Torque(Nm)','RPM','Torque(Nm)')
+
+    def on_steer_clicked(self, event):
+        if self.steering_curve_list is not None:
+            self.open_full_plot_window(self.steering_curve_list,'Steering Angle curve','Angle(deg)','Speed(m/s)')
+
+    def open_full_plot_window(self, data,title='Plot',x_label='x',y_label='y'):
+            """Create a new window with toolbar + full Matplotlib interactivity."""
+            try:
+                self.full_plot_window = QtWidgets.QMainWindow(self)
+                self.full_plot_window.setWindowTitle("Interactive Plot")
+                self.full_plot_window.resize(800, 600)
+
+                central_widget = QtWidgets.QWidget()
+                layout = QVBoxLayout(central_widget)
+
+                figure = Figure()
+                canvas = FigureCanvas(figure)
+                toolbar = NavigationToolbar(canvas, self.full_plot_window)
+
+                layout.addWidget(toolbar)
+                layout.addWidget(canvas)
+
+                ax = figure.add_subplot(111)
+
+                # ✅ Handle list of (x, y) tuples or DataFrame
+                if isinstance(data, list) and all(isinstance(t, tuple) and len(t) == 2 for t in data):
+                    x, y = zip(*data)
+                    ax.plot(x, y, marker='o', linestyle='-')
+                    ax.set_title(title)
+                    ax.set_xlabel(x_label)
+                    ax.set_ylabel(y_label)
+                else:
+                    # Assume pandas DataFrame
+                    self.df = data
+                    self.df.plot(ax=ax)
+                    ax.set_title(title)
+                    ax.set_xlabel(x_label)
+                    ax.set_ylabel(y_label)
+
+                canvas.draw()
+
+                self.full_plot_window.setCentralWidget(central_widget)
+                self.full_plot_window.show()
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to open plot window:\n{e}")
+
+    def open_file_dialog(self, figure, canvas):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV File",
+            "",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            print(f"Selected path: {file_path}")
+            data=pd.read_csv(file_path)
+            self.plot_csv(data, figure, canvas)
+
+    def fetch_gear_details(self):
+        id=int(self.VCB_gears.currentText())
+        print(f'Selected Gear: {id}')
+        self.VTLE_fg_ratio.setText(str(self.forward_gears[id].ratio))
+        self.VTLE_fg_up_ratio.setText(str(self.forward_gears[id].up_ratio))
+        self.VTLE_fg_down_ratio.setText(str(self.forward_gears[id].down_ratio))
+
 
     def fetch_weather_details(self):
         #self.world.set_weather(carla.WeatherParameters.Default)
@@ -287,12 +444,6 @@ class MainWindow(QMainWindow):
         self.WHS_rayleigh_scattering_scale.setValue(int(self.rayleigh_scattering_scale))
         self.WHS_dust_storm.setValue(int(self.dust_storm))
 
-
-        
-        
-
-
-
     def apply_weather_details(self):
         self.weather=self.world.get_weather()
         self.weather.cloudiness=self.WHS_cloudiness.value()
@@ -318,7 +469,6 @@ class MainWindow(QMainWindow):
         print(f'applied precipitatoin value {self.weather_precipitation}')
         self.world.set_weather(self.weather)
 
-
     def set_weather_default(self):
         self.world.set_weather(carla.WeatherParameters.Default)
         print("Weather has been reset to default.")
@@ -332,7 +482,7 @@ class MainWindow(QMainWindow):
 
 if __name__=="__main__":
    
-  
+    print("Hello from main")
     app=QApplication(sys.argv)
 
 
